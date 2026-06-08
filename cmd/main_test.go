@@ -2,33 +2,32 @@ package cmd
 
 import (
 	"fmt"
-	"sync"
+	"os"
 	"testing"
+	"time"
 
-	"github.com/checkmarx/2ms/v4/engine"
-	"github.com/checkmarx/2ms/v4/lib/secrets"
-	"github.com/checkmarx/2ms/v4/plugins"
+	"github.com/checkmarx/2ms/v5/engine"
+	"github.com/checkmarx/2ms/v5/engine/rules/ruledefine"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestPreRun(t *testing.T) {
 	tests := []struct {
-		name               string
-		stdoutFormatVar    string
-		reportPath         []string
-		engineConfigVar    engine.EngineConfig
-		customRegexRuleVar []string
-		validateVar        bool
-		expectedErr        error
+		name                     string
+		stdoutFormatVar          string
+		reportPath               []string
+		engineConfigVar          engine.EngineConfig
+		expectedInitErr          error   // alternatively, use expectedContainsInitErrs
+		expectedContainsInitErrs []error // alternatively, use expectedInitErr
+		expectedPreRunErr        error
 	}{
 		{
-			name:               "error in validateFormat",
-			stdoutFormatVar:    "invalid",
-			reportPath:         []string{"report.json"},
-			engineConfigVar:    engine.EngineConfig{},
-			customRegexRuleVar: []string{},
-			validateVar:        false,
-			expectedErr:        fmt.Errorf("invalid output format: invalid, available formats are: json, yaml and sarif"),
+			name:              "error in validateFormat",
+			stdoutFormatVar:   "invalid",
+			reportPath:        []string{"report.json"},
+			engineConfigVar:   engine.EngineConfig{},
+			expectedPreRunErr: errInvalidOutputFormat,
 		},
 		{
 			name:            "error in engine.Init",
@@ -37,36 +36,97 @@ func TestPreRun(t *testing.T) {
 			engineConfigVar: engine.EngineConfig{
 				SelectedList: []string{"mockInvalid"},
 			},
-			customRegexRuleVar: []string{},
-			validateVar:        false,
-			expectedErr:        fmt.Errorf("no rules were selected"),
+			expectedInitErr: engine.ErrNoRulesSelected,
 		},
 		{
-			name:               "error in engine.AddRegexRules",
-			stdoutFormatVar:    "json",
-			reportPath:         []string{"mock.json"},
-			engineConfigVar:    engine.EngineConfig{},
-			customRegexRuleVar: []string{"[a-z"},
-			validateVar:        false,
-			expectedErr:        fmt.Errorf("failed to compile regex rule [a-z: error parsing regexp: missing closing ]: `[a-z`"),
+			name:            "successfully started go routines with validateVar enabled",
+			stdoutFormatVar: "json",
+			reportPath:      []string{"mock.json"},
+			engineConfigVar: engine.EngineConfig{
+				WithValidation: true,
+			},
+			expectedPreRunErr: nil,
 		},
 		{
-			name:               "successfully started go routines with validateVar enabled",
-			stdoutFormatVar:    "json",
-			reportPath:         []string{"mock.json"},
-			engineConfigVar:    engine.EngineConfig{},
-			customRegexRuleVar: []string{},
-			validateVar:        true,
-			expectedErr:        nil,
+			name:              "successfully started go routines with validateVar disabled",
+			stdoutFormatVar:   "json",
+			reportPath:        []string{"mock.json"},
+			engineConfigVar:   engine.EngineConfig{},
+			expectedPreRunErr: nil,
 		},
 		{
-			name:               "successfully started go routines with validateVar disabled",
-			stdoutFormatVar:    "json",
-			reportPath:         []string{"mock.json"},
-			engineConfigVar:    engine.EngineConfig{},
-			customRegexRuleVar: []string{},
-			validateVar:        false,
-			expectedErr:        nil,
+			name: "errors on custom rules, rule id and regex missing",
+			engineConfigVar: engine.EngineConfig{
+				CustomRules: []*ruledefine.Rule{
+					{
+						Description: "Match passwords",
+					},
+					{
+						RuleID:      "b47a1995-6572-41bb-b01d-d215b43ab089",
+						RuleName:    "mock-rule2",
+						Description: "Match API keys",
+						Regex:       "[A-Za-z0-9]{40}",
+					},
+				},
+			},
+			expectedPreRunErr: nil,
+			expectedContainsInitErrs: []error{
+				fmt.Errorf("rule#0: missing ruleID"),
+				fmt.Errorf("rule#0: missing regex"),
+			},
+		},
+		{
+			name: "errors on custom rules, regex, severity and score parameters invalid",
+			engineConfigVar: engine.EngineConfig{
+				CustomRules: []*ruledefine.Rule{
+					{
+						RuleID:        "db18ccf1-4fbf-49f6-aec1-939a2e5464c0",
+						RuleName:      "mock-rule",
+						Description:   "Match passwords",
+						Regex:         "[A-Za-z0-9]{32})",
+						Severity:      "mockSeverity",
+						Category:      "mockCategory",
+						ScoreRuleType: 10,
+					},
+					{
+						RuleID:      "b47a1995-6572-41bb-b01d-d215b43ab089",
+						RuleName:    "mock-rule2",
+						Description: "Match API keys",
+						Regex:       "[A-Za-z0-9]{40}",
+					},
+				},
+			},
+			expectedPreRunErr: nil,
+			expectedContainsInitErrs: []error{
+				fmt.Errorf("rule#0;RuleID-db18ccf1-4fbf-49f6-aec1-939a2e5464c0: invalid regex"),
+				fmt.Errorf("rule#0;RuleID-db18ccf1-4fbf-49f6-aec1-939a2e5464c0: invalid severity:" +
+					" mockSeverity not one of ([Critical High Medium Low Info])"),
+				fmt.Errorf("rule#0;RuleID-db18ccf1-4fbf-49f6-aec1-939a2e5464c0: invalid category:" +
+					" mockCategory not an acceptable category of type RuleCategory"),
+				fmt.Errorf("rule#0;RuleID-db18ccf1-4fbf-49f6-aec1-939a2e5464c0: invalid rule type: 10 not an acceptable uint8 value, should be between 1 and 4"),
+			},
+		},
+		{
+			name: "errors on custom rules, rule id missing",
+			engineConfigVar: engine.EngineConfig{
+				CustomRules: []*ruledefine.Rule{
+					{
+						RuleName:    "mock-rule",
+						Description: "Match passwords",
+						Regex:       "[A-Za-z0-9]{32})",
+					},
+					{
+						RuleName:    "mock-rule2",
+						Description: "Match API keys",
+						Regex:       "[A-Za-z0-9]{40}",
+					},
+				},
+			},
+			expectedPreRunErr: nil,
+			expectedContainsInitErrs: []error{
+				fmt.Errorf("rule#0;RuleName-mock-rule: missing ruleID"),
+				fmt.Errorf("rule#1;RuleName-mock-rule2: missing ruleID"),
+			},
 		},
 	}
 
@@ -75,26 +135,50 @@ func TestPreRun(t *testing.T) {
 			stdoutFormatVar = tt.stdoutFormatVar
 			reportPathVar = tt.reportPath
 			engineConfigVar = tt.engineConfigVar
-			customRegexRuleVar = tt.customRegexRuleVar
-			validateVar = tt.validateVar
-			Channels.Items = make(chan plugins.ISourceItem)
-			Channels.Errors = make(chan error)
-			Channels.WaitGroup = &sync.WaitGroup{}
-			SecretsChan = make(chan *secrets.Secret)
-			SecretsExtrasChan = make(chan *secrets.Secret)
-			ValidationChan = make(chan *secrets.Secret)
-			CvssScoreWithoutValidationChan = make(chan *secrets.Secret)
-			err := preRun("mock", nil, nil)
-			close(Channels.Items)
-			close(Channels.Errors)
-			Channels.WaitGroup.Wait()
-			if tt.expectedErr != nil {
-				assert.Error(t, err)
-				assert.EqualError(t, err, tt.expectedErr.Error())
-			} else {
-				assert.NoError(t, err)
-				assert.Empty(t, Channels.Errors)
+
+			engineInstance, err := engine.Init(&engineConfigVar)
+			if tt.expectedInitErr != nil {
+				assert.ErrorIs(t, err, tt.expectedInitErr)
+				return
 			}
+			for _, expectErr := range tt.expectedContainsInitErrs {
+				assert.ErrorContains(t, err, expectErr.Error())
+				return
+			}
+
+			defer engineInstance.Shutdown()
+			rootCmd := &cobra.Command{
+				Use:     "2ms",
+				Short:   "2ms Secrets Detection",
+				Long:    "2ms Secrets Detection: A tool to detect secrets in public websites and communication services.",
+				Version: Version,
+			}
+
+			time.AfterFunc(50*time.Millisecond, func() {
+				close(engineInstance.GetPluginChannels().GetItemsCh())
+			})
+			err = preRun("mock", engineInstance, rootCmd, nil)
+			assert.ErrorIs(t, err, tt.expectedPreRunErr)
 		})
+	}
+}
+
+// TODO temporary, move it to organized integrations tests later
+func TestVersionFlagExitZero(t *testing.T) {
+	// Preserve and restore process globals altered in the test.
+	oldArgs := os.Args
+	t.Cleanup(func() {
+		os.Args = oldArgs
+	})
+
+	// Simulate: 2ms --version
+	os.Args = []string{"2ms", "--version"}
+
+	code, err := Execute()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got: %d", code)
 	}
 }

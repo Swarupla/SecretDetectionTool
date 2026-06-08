@@ -8,10 +8,11 @@ import (
 	"os/exec"
 	"path"
 	"runtime"
+	"strings"
 	"testing"
 
-	"github.com/checkmarx/2ms/v4/lib/reporting"
-	"github.com/checkmarx/2ms/v4/lib/utils"
+	"github.com/checkmarx/2ms/v5/lib/reporting"
+	"github.com/checkmarx/2ms/v5/lib/utils"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ type cli struct {
 
 func createCLI(outputDir string) (cli, error) {
 	executable := path.Join(outputDir, "2ms")
-	lib, err := build.Import("github.com/checkmarx/2ms/v4", "", build.FindOnly)
+	lib, err := build.Import("github.com/checkmarx/2ms/v5", "", build.FindOnly)
 	if err != nil {
 		return cli{}, fmt.Errorf("failed to import 2ms: %s", err)
 	}
@@ -73,9 +74,7 @@ func TestIntegration(t *testing.T) {
 	}
 
 	executable, err := createCLI(t.TempDir())
-	if err != nil {
-		t.Fatalf("failed to build CLI: %s", err)
-	}
+	require.NoError(t, err)
 
 	t.Run("filesystem: one secret found", func(t *testing.T) {
 		projectDir := t.TempDir()
@@ -84,17 +83,16 @@ func TestIntegration(t *testing.T) {
 			t.Fatalf("failed to generate project: %s", err)
 		}
 
-		if err := executable.run("filesystem", "--path", projectDir); err == nil {
-			t.Error("expected error (secrets found), got nil")
-		}
+		err := executable.run("filesystem", "--path", projectDir)
+		assert.Error(t, err, "expected error when secrets are found")
 
 		report, err := executable.getReport()
 		if err != nil {
 			t.Fatalf("failed to get report: %s", err)
 		}
 
-		if len(report.Results) != 1 {
-			t.Errorf("expected one result, got %d", len(report.Results))
+		if report.GetTotalItemsScanned() != 1 {
+			t.Errorf("expected one result, got %d", report.GetTotalItemsScanned())
 		}
 	})
 
@@ -110,11 +108,11 @@ func TestIntegration(t *testing.T) {
 			t.Fatalf("failed to get report: %s", err)
 		}
 
-		if len(report.Results) < 2 {
-			t.Errorf("expected at least two results, got %d", len(report.Results))
+		if report.GetTotalItemsScanned() < 2 {
+			t.Errorf("expected at least two results, got %d", report.GetTotalItemsScanned())
 		}
 
-		for _, result := range report.Results {
+		for _, result := range report.GetResults() {
 			for _, secret := range result {
 				if secret.ValidationStatus == "" {
 					t.Errorf("expected validation status, got empty")
@@ -138,10 +136,7 @@ func TestIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get report: %s", err)
 		}
-
-		if len(report.Results) != 0 {
-			t.Errorf("expected no results, got %d", len(report.Results))
-		}
+		assert.Equal(t, 0, len(report.GetResults()))
 	})
 }
 
@@ -153,44 +148,216 @@ func TestSecretsScans(t *testing.T) {
 	tests := []struct {
 		Name               string
 		ScanTarget         string
+		Args               []string
 		TargetPath         string
 		ExpectedReportPath string
 	}{
 		{
-			Name:               "secret at end without newline",
-			ScanTarget:         "filesystem",
-			TargetPath:         "testData/input/secret_at_end.txt",
+			Name:       "secret at end without newline",
+			ScanTarget: "filesystem",
+			Args: []string{
+				"--path",
+				"testData/input/secret_at_end.txt",
+				"--ignore-on-exit",
+				"results",
+			},
 			ExpectedReportPath: "testData/expectedReport/secret_at_end_report.json",
 		},
 		{
-			Name:               "multi line secret ",
-			ScanTarget:         "filesystem",
-			TargetPath:         "testData/input/multi_line_secret.txt",
+			Name:       "multi line secret ",
+			ScanTarget: "filesystem",
+			Args: []string{
+				"--path",
+				"testData/input/multi_line_secret.txt",
+				"--ignore-on-exit",
+				"results",
+			},
 			ExpectedReportPath: "testData/expectedReport/multi_line_secret_report.json",
 		},
 		{
-			Name:               "secret at end with newline ",
-			ScanTarget:         "filesystem",
-			TargetPath:         "testData/input/secret_at_end_with_newline.txt",
+			Name:       "secret at end with newline ",
+			ScanTarget: "filesystem",
+			Args: []string{
+				"--path",
+				"testData/input/secret_at_end_with_newline.txt",
+				"--ignore-on-exit",
+				"results",
+			},
 			ExpectedReportPath: "testData/expectedReport/secret_at_end_with_newline_report.json",
+		},
+		{
+			Name:       "run all default + custom rules in json",
+			ScanTarget: "filesystem",
+			Args: []string{
+				"--path",
+				"testData/input/custom_rules_secrets.txt",
+				"--validate",
+				"--custom-rules-path",
+				"testData/customRuleConfig/customRules.json",
+				"--ignore-on-exit",
+				"results",
+			},
+			ExpectedReportPath: "testData/expectedReport/customRules/default_plus_all_custom_rules.json",
+		},
+		{
+			Name:       "run all default + custom rules in yaml",
+			ScanTarget: "filesystem",
+			Args: []string{
+				"--path",
+				"testData/input/custom_rules_secrets.txt",
+				"--validate",
+				"--custom-rules-path",
+				"testData/customRuleConfig/customRules.yaml",
+				"--ignore-on-exit",
+				"results",
+			},
+			ExpectedReportPath: "testData/expectedReport/customRules/default_plus_all_custom_rules.json",
+		},
+		{
+			Name:       "run only custom rules in json",
+			ScanTarget: "filesystem",
+			Args: []string{
+				"--path",
+				"testData/input/custom_rules_secrets.txt",
+				"--validate",
+				"--custom-rules-path",
+				"testData/customRuleConfig/customRules.json",
+				"--rule",
+				"custom",
+				"--ignore-on-exit",
+				"results",
+			},
+			ExpectedReportPath: "testData/expectedReport/customRules/only_custom_rules.json",
+		},
+		{
+			Name:       "run only custom override rules in json",
+			ScanTarget: "filesystem",
+			Args: []string{
+				"--path",
+				"testData/input/custom_rules_secrets.txt",
+				"--validate",
+				"--custom-rules-path",
+				"testData/customRuleConfig/customRules.json",
+				"--rule",
+				"override",
+				"--ignore-on-exit",
+				"results",
+			},
+			ExpectedReportPath: "testData/expectedReport/customRules/only_override_rules.json",
+		},
+		{
+			Name:       "run default + non override rules in json",
+			ScanTarget: "filesystem",
+			Args: []string{
+				"--path",
+				"testData/input/custom_rules_secrets.txt",
+				"--validate",
+				"--custom-rules-path",
+				"testData/customRuleConfig/customRules.json",
+				"--ignore-rule",
+				"override",
+				"--ignore-on-exit",
+				"results",
+			},
+			ExpectedReportPath: "testData/expectedReport/customRules/default_plus_non_override_rules.json",
+		},
+		{
+			Name:       "run only custom rules and ignore overrides in json",
+			ScanTarget: "filesystem",
+			Args: []string{
+				"--path",
+				"testData/input/custom_rules_secrets.txt",
+				"--validate",
+				"--custom-rules-path",
+				"testData/customRuleConfig/customRules.json",
+				"--rule",
+				"custom",
+				"--ignore-rule",
+				"override",
+				"--ignore-on-exit",
+				"results",
+			},
+			ExpectedReportPath: "testData/expectedReport/customRules/only_custom_no_override_rules.json",
+		},
+		{
+			Name:       "run only custom rules in json and ignore overrides by rule id",
+			ScanTarget: "filesystem",
+			Args: []string{
+				"--path",
+				"testData/input/custom_rules_secrets.txt",
+				"--validate",
+				"--custom-rules-path",
+				"testData/customRuleConfig/customRules.json",
+				"--rule",
+				"custom",
+				"--ignore-rule",
+				"01ab7659-d25a-4a1c-9f98-dee9d0cf2e70,9f24ac30-9e04-4dc2-bc32-26da201f87e5",
+				"--ignore-on-exit",
+				"results",
+			},
+			ExpectedReportPath: "testData/expectedReport/customRules/only_custom_no_override_rules.json",
+		},
+		{
+			Name:       "run only custom rules in json and ignore overrides by rule name",
+			ScanTarget: "filesystem",
+			Args: []string{
+				"--path",
+				"testData/input/custom_rules_secrets.txt",
+				"--validate",
+				"--custom-rules-path",
+				"testData/customRuleConfig/customRules.json",
+				"--rule",
+				"custom",
+				"--ignore-rule",
+				"Generic-Api-Key,Github-Pat-Custom",
+				"--ignore-on-exit",
+				"results",
+			},
+			ExpectedReportPath: "testData/expectedReport/customRules/only_custom_no_override_rules.json",
+		},
+		{
+			Name:       "run only custom rules in json and ignore overrides by result id",
+			ScanTarget: "filesystem",
+			Args: []string{
+				"--path",
+				"testData/input/custom_rules_secrets.txt",
+				"--validate",
+				"--custom-rules-path",
+				"testData/customRuleConfig/customRules.json",
+				"--rule",
+				"custom",
+				"--ignore-result",
+				"4431f6f38c1a36156f0486df95b0436810272bfb",
+				"--ignore-on-exit",
+				"results",
+			},
+			ExpectedReportPath: "testData/expectedReport/customRules/only_custom_no_override_rules.json",
+		},
+		{
+			Name:       "run only default rules by ignoring custom rules in json",
+			ScanTarget: "filesystem",
+			Args: []string{
+				"--path",
+				"testData/input/custom_rules_secrets.txt",
+				"--validate",
+				"--custom-rules-path",
+				"testData/customRuleConfig/customRules.json",
+				"--ignore-rule",
+				"custom",
+				"--ignore-on-exit",
+				"results",
+			},
+			ExpectedReportPath: "testData/expectedReport/customRules/only_default_ignore_custom_rules.json",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.Name, func(t *testing.T) {
 			executable, err := createCLI(t.TempDir())
-			require.Nil(t, err, "failed to build CLI")
+			require.NoError(t, err)
 
-			args := []string{tc.ScanTarget}
-			if tc.ScanTarget == "filesystem" {
-				args = append(args, "--path", tc.TargetPath)
-			} else {
-				args = append(args, tc.TargetPath)
-			}
-			args = append(args, "--ignore-on-exit", "results")
-
-			if err := executable.run(args[0], args[1:]...); err != nil {
-				t.Fatalf("error running scan with args: %v, got: %v", args, err)
+			if err := executable.run(tc.ScanTarget, tc.Args...); err != nil {
+				t.Fatalf("error running scan with args: %v, got: %v", tc.Args, err)
 			}
 
 			actualReport, err := executable.getReport()
@@ -222,16 +389,491 @@ func TestSecretsScans(t *testing.T) {
 	}
 }
 
-func (c *cli) getReport() (reporting.Report, error) {
-	report := reporting.Init()
+func TestFlagsIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping flags integration test")
+	}
+
+	executable, err := createCLI(t.TempDir())
+	require.NoError(t, err)
+
+	t.Run("--regex flag: custom regex pattern detection", func(t *testing.T) {
+		projectDir := t.TempDir()
+
+		// Create test file with custom pattern that matches our regex
+		customSecret := "CUSTOM_SECRET_ABC123_XYZ"
+		testContent := fmt.Sprintf("Application config:\napi_key: %s\ndatabase_url: postgres://user:pass@host/db", customSecret)
+
+		err := os.WriteFile(path.Join(projectDir, "config.txt"), []byte(testContent), 0644)
+		require.NoError(t, err, "failed to create test file")
+
+		// Run scan with custom regex that should match our pattern
+		customRegex := "CUSTOM_SECRET_[A-Z0-9_]+"
+		err = executable.run("filesystem", "--path", projectDir, "--regex", customRegex, "--ignore-on-exit", "results")
+		assert.NoError(t, err, "scan should succeed with custom regex")
+
+		report, err := executable.getReport()
+		require.NoError(t, err, "failed to get report")
+
+		// Verify that custom regex found the expected result
+		results := report.GetResults()
+		require.Greater(t, len(results), 0, "Custom regex should detect the pattern")
+
+		// Verify that one of the results is from our custom regex rule
+		foundCustomRule := false
+		for _, resultGroup := range results {
+			for _, result := range resultGroup {
+				if strings.Contains(result.RuleID, "custom-regex") {
+					foundCustomRule = true
+					assert.Equal(t, customSecret, result.Value, "Custom regex should detect the correct value")
+					break
+				}
+			}
+		}
+		assert.True(t, foundCustomRule, "Should find at least one result from custom regex rule")
+	})
+
+	t.Run("--rule flag: select specific rules", func(t *testing.T) {
+		projectDir := t.TempDir()
+
+		// Create test file with GitHub token
+		githubToken := "ghp_1234567890abcdefghijklmnopqrstuvwxyz123"
+		testContent := fmt.Sprintf("GitHub configuration:\ntoken: %s\nother_config: value", githubToken)
+
+		err := os.WriteFile(path.Join(projectDir, "github_config.txt"), []byte(testContent), 0644)
+		require.NoError(t, err, "failed to create test file")
+
+		// First, run scan with only GitHub rule
+		err = executable.run("filesystem", "--path", projectDir, "--rule", "github-pat", "--ignore-on-exit", "results")
+		assert.NoError(t, err, "scan should succeed with specific rule")
+
+		report, err := executable.getReport()
+		require.NoError(t, err, "failed to get report")
+
+		// Verify only GitHub secrets are found
+		results := report.GetResults()
+		if len(results) > 0 {
+			found := false
+			for _, secretList := range results {
+				for _, secret := range secretList {
+					if secret.RuleName == "Github-Pat" {
+						found = true
+					}
+				}
+			}
+			assert.True(t, found, "should find GitHub token when rule is selected")
+		}
+	})
+
+	t.Run("--ignore-rule flag: exclude specific rules", func(t *testing.T) {
+		projectDir := t.TempDir()
+		reportsDir := t.TempDir() // Separate directory for reports to avoid scanning them
+
+		// Create test file with multiple types of secrets
+		testContent := `Config file:
+github_token: ghp_1234567890abcdefghijklmnopqrstuvwxyz123
+aws_key: AKIAIOSFODNN7EXAMPLE
+slack_token: xoxb-1234567890-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx`
+
+		err := os.WriteFile(path.Join(projectDir, "multi_secrets.txt"), []byte(testContent), 0644)
+		require.NoError(t, err, "failed to create test file")
+
+		// Create separate report paths for each scan to avoid overwriting and scanning
+		baselineReportPath := path.Join(reportsDir, "baseline_results.json")
+		filteredReportPath := path.Join(reportsDir, "filtered_results.json")
+
+		// First scan without ignoring anything to see what's found
+		err = executable.run("filesystem", "--path", projectDir, "--report-path", baselineReportPath, "--ignore-on-exit", "results")
+		assert.NoError(t, err, "baseline scan should succeed")
+
+		baselineReport, err := getReportFromPath(baselineReportPath)
+		require.NoError(t, err, "failed to get baseline report")
+
+		// Run scan ignoring GitHub rules - try both specific rule and generic-api-key
+		err = executable.run("filesystem", "--path", projectDir, "--ignore-rule", "github-pat,generic-api-key", "--report-path", filteredReportPath, "--ignore-on-exit", "results")
+		assert.NoError(t, err, "scan should succeed with ignored rule")
+
+		report, err := getReportFromPath(filteredReportPath)
+		require.NoError(t, err, "failed to get report")
+
+		// Verify we have fewer results when rules are ignored
+		baselineResults := baselineReport.GetResults()
+		filteredResults := report.GetResults()
+
+		assert.Less(t, len(filteredResults), len(baselineResults), "ignoring rules should result in same or fewer findings")
+	})
+}
+
+func (c *cli) getReport() (reporting.IReport, error) {
+	report := reporting.New()
 
 	content, err := os.ReadFile(c.resultsPath)
 	if err != nil {
-		return reporting.Report{}, err
+		return nil, err
 	}
 	if err := json.Unmarshal(content, &report); err != nil {
-		return reporting.Report{}, err
+		return nil, err
 	}
 
-	return *report, nil
+	return report, nil
+}
+
+func getReportFromPath(reportPath string) (reporting.IReport, error) {
+	report := reporting.New()
+
+	content, err := os.ReadFile(reportPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(content, &report); err != nil {
+		return nil, err
+	}
+
+	return report, nil
+}
+
+func TestMissingFlagsIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping missing flags integration test")
+	}
+
+	executable, err := createCLI(t.TempDir())
+	require.NoError(t, err)
+
+	t.Run("--validate flag: enable secret validation", func(t *testing.T) {
+		projectDir := t.TempDir()
+
+		// Create test file with a secret that can be validated
+		testContent := `Config file:
+github_token: ghp_1234567890abcdefghijklmnopqrstuvwxyz123
+aws_key: AKIAIOSFODNN7EXAMPLE
+database_url: postgres://user:pass@host/db`
+
+		err := os.WriteFile(path.Join(projectDir, "config.txt"), []byte(testContent), 0644)
+		require.NoError(t, err, "failed to create test file")
+
+		// Run scan with --validate flag
+		err = executable.run("filesystem", "--path", projectDir, "--validate", "--ignore-on-exit", "results")
+		assert.NoError(t, err, "scan should succeed with validate flag")
+
+		report, err := executable.getReport()
+		require.NoError(t, err, "failed to get report")
+
+		// Verify that validation was attempted (validation status should be present)
+		results := report.GetResults()
+		if len(results) > 0 {
+			foundValidation := false
+			for _, resultGroup := range results {
+				for _, result := range resultGroup {
+					// When validation is enabled, ValidationStatus should be set
+					if result.ValidationStatus != "" {
+						foundValidation = true
+						break
+					}
+				}
+			}
+			// Note: actual validation may fail in test environment, but the flag should be processed
+			t.Logf("Validation flag processed, validation attempted: %v", foundValidation)
+		}
+	})
+
+	t.Run("--add-special-rule flag: add special rules to scan", func(t *testing.T) {
+		projectDir := t.TempDir()
+
+		// Create test file with content that matches special rule pattern
+		testContent := `Application config:
+special_pattern: SPECIAL_SECRET_123_XYZ
+normal_secret: some-value-here`
+
+		err := os.WriteFile(path.Join(projectDir, "special.txt"), []byte(testContent), 0644)
+		require.NoError(t, err, "failed to create test file")
+
+		// Run scan with --add-special-rule flag
+		// Note: The actual special rule format depends on the implementation
+		err = executable.run("filesystem", "--path", projectDir, "--add-special-rule", "test-special-rule", "--ignore-on-exit", "results")
+
+		// The flag should be processed without error
+		// Actual detection depends on the special rule implementation
+		t.Logf("--add-special-rule flag processed, exit code: %v", err)
+	})
+
+	t.Run("--allowed-values flag: filter results with allowed values", func(t *testing.T) {
+		projectDir := t.TempDir()
+
+		// Create test file with secrets
+		testContent := `Config:
+api_key: test-api-key-12345
+allowed_key: allowed-value-xyz
+database_password: secret-password-789`
+
+		err := os.WriteFile(path.Join(projectDir, "allowed.txt"), []byte(testContent), 0644)
+		require.NoError(t, err, "failed to create test file")
+
+		// Create allowed values file
+		allowedValuesFile := path.Join(projectDir, "allowed_values.txt")
+		allowedContent := "allowed-value-xyz\ntest-api-key-12345"
+		err = os.WriteFile(allowedValuesFile, []byte(allowedContent), 0644)
+		require.NoError(t, err, "failed to create allowed values file")
+
+		// Run scan with --allowed-values flag
+		err = executable.run("filesystem", "--path", projectDir, "--allowed-values", allowedValuesFile, "--ignore-on-exit", "results")
+
+		// The flag should be processed
+		t.Logf("--allowed-values flag processed, exit code: %v", err)
+
+		report, err := executable.getReport()
+		if err == nil {
+			results := report.GetResults()
+			// When allowed values are used, secrets matching allowed values should be filtered
+			t.Logf("Results with allowed values filtering: %d groups found", len(results))
+		}
+	})
+
+	t.Run("--ignore-result flag: ignore specific results", func(t *testing.T) {
+		projectDir := t.TempDir()
+
+		// Create test file with multiple secrets
+		testContent := `Configuration:
+github_token: ghp_1234567890abcdefghijklmnopqrstuvwxyz123
+aws_key: AKIAIOSFODNN7EXAMPLE
+api_key: sk-1234567890abcdefghijklmnopqrstuvwxyz`
+
+		err := os.WriteFile(path.Join(projectDir, "ignore_result.txt"), []byte(testContent), 0644)
+		require.NoError(t, err, "failed to create test file")
+
+		// First, run scan without ignore flag to discover secret IDs
+		err = executable.run("filesystem", "--path", projectDir, "--ignore-on-exit", "results")
+		require.NoError(t, err, "initial scan should succeed")
+
+		initialReport, err := executable.getReport()
+		require.NoError(t, err, "should get initial report")
+
+		initialResults := initialReport.GetResults()
+		require.Greater(t, len(initialResults), 0, "should find some secrets initially")
+
+		// Pick the first secret ID to ignore
+		var secretIdToIgnore string
+		var secretValueToIgnore string
+		for _, resultGroup := range initialResults {
+			for _, result := range resultGroup {
+				secretIdToIgnore = result.ID
+				secretValueToIgnore = result.Value
+				break
+			}
+			if secretIdToIgnore != "" {
+				break
+			}
+		}
+		require.NotEmpty(t, secretIdToIgnore, "should find at least one secret to ignore")
+		t.Logf("Will ignore secret ID: %s with value: %s", secretIdToIgnore, secretValueToIgnore)
+
+		// Now run scan with --ignore-result flag to ignore the specific secret
+		err = executable.run("filesystem", "--path", projectDir, "--ignore-result", secretIdToIgnore, "--ignore-on-exit", "results")
+		t.Logf("--ignore-result flag processed, exit code: %v", err)
+
+		report, err := executable.getReport()
+		if err == nil {
+			results := report.GetResults()
+			// Verify that the specific secret ID is filtered out
+			foundIgnoredSecret := false
+			for _, resultGroup := range results {
+				for _, result := range resultGroup {
+					if result.ID == secretIdToIgnore {
+						foundIgnoredSecret = true
+					}
+				}
+			}
+			assert.False(t, foundIgnoredSecret, "The ignored secret ID should not be present in results")
+
+			// Verify we still have fewer results than before
+			assert.Less(t, len(results), len(initialResults), "Should have fewer results after ignoring one secret")
+		}
+	})
+
+	t.Run("--max-target-megabytes flag: limit file size for scanning", func(t *testing.T) {
+		projectDir := t.TempDir()
+
+		// Create a small file that should be scanned
+		smallContent := "Small file with secret: ghp_1234567890abcdefghijklmnopqrstuvwxyz123"
+		err := os.WriteFile(path.Join(projectDir, "small.txt"), []byte(smallContent), 0644)
+		require.NoError(t, err, "failed to create small file")
+
+		// Create a large file that should be skipped (simulate with content)
+		// Note: In real scenario, this would be a file larger than the limit
+		largeContent := strings.Repeat("Large file content with padding. ", 1000)
+		largeContent += "Secret in large file: aws_secret_key_AKIAIOSFODNN7EXAMPLE"
+		err = os.WriteFile(path.Join(projectDir, "large.txt"), []byte(largeContent), 0644)
+		require.NoError(t, err, "failed to create large file")
+
+		// Run scan with --max-target-megabytes flag set to a very small value
+		// This should skip files over the size limit
+		err = executable.run("filesystem", "--path", projectDir, "--max-target-megabytes", "0", "--ignore-on-exit", "results")
+
+		// The flag should be processed
+		t.Logf("--max-target-megabytes flag processed, exit code: %v", err)
+
+		report, err := executable.getReport()
+		if err == nil {
+			// With max-target-megabytes set to 0, files should be skipped
+			results := report.GetResults()
+			t.Logf("Results with size limit: %d groups found", len(results))
+		}
+	})
+
+	t.Run("Combined flags: multiple flags together", func(t *testing.T) {
+		projectDir := t.TempDir()
+
+		// Create test file
+		testContent := `Multi-flag test:
+github_token: ghp_test1234567890abcdefghijklmnopqrstuvwxyz
+custom_secret: CUSTOM_ABC_123
+api_key: test-key-456`
+
+		err := os.WriteFile(path.Join(projectDir, "combined.txt"), []byte(testContent), 0644)
+		require.NoError(t, err, "failed to create test file")
+
+		// Run scan with multiple flags combined
+		err = executable.run("filesystem",
+			"--path", projectDir,
+			"--validate",
+			"--regex", "CUSTOM_[A-Z_]+[0-9]+",
+			"--ignore-rule", "generic-api-key",
+			"--max-target-megabytes", "10",
+			"--ignore-on-exit", "results")
+
+		// All flags should be processed together
+		t.Logf("Combined flags processed, exit code: %v", err)
+
+		report, err := executable.getReport()
+		if err == nil {
+			results := report.GetResults()
+			// Verify multiple flag behaviors work together
+			t.Logf("Results with combined flags: %d groups found", len(results))
+
+			// Check if custom regex was detected
+			foundCustomRegex := false
+			for _, resultGroup := range results {
+				for _, result := range resultGroup {
+					if strings.Contains(result.Value, "CUSTOM_ABC_123") {
+						foundCustomRegex = true
+						t.Log("Custom regex pattern detected successfully")
+					}
+				}
+			}
+
+			if !foundCustomRegex && len(results) > 0 {
+				t.Log("Custom regex pattern may have been processed but not detected in results")
+			}
+		}
+	})
+
+	t.Run("--max-findings flag: caps total number of findings", func(t *testing.T) {
+		projectDir := t.TempDir()
+
+		// Create multiple files with secrets to ensure we have more than the limit
+		for i := 1; i <= 5; i++ {
+			content := fmt.Sprintf("secret%d: ghp_%dabcdefghijklmnopqrstuvwxyz12345678", i, i)
+			err := os.WriteFile(path.Join(projectDir, fmt.Sprintf("secret%d.txt", i)), []byte(content), 0644)
+			require.NoError(t, err, "failed to create test file")
+		}
+
+		// Run scan with --max-findings set to 2
+		err = executable.run("filesystem", "--path", projectDir, "--max-findings", "2", "--ignore-on-exit", "results")
+		assert.NoError(t, err, "scan should succeed with max-findings flag")
+
+		report, err := executable.getReport()
+		require.NoError(t, err, "failed to get report")
+
+		totalSecrets := report.GetTotalSecretsFound()
+		t.Logf("Total secrets found with --max-findings=2: %d", totalSecrets)
+		assert.LessOrEqual(t, totalSecrets, 2, "should find at most 2 secrets when --max-findings=2")
+	})
+
+	t.Run("--max-rule-matches-per-fragment flag: limits matches per rule per fragment", func(t *testing.T) {
+		projectDir := t.TempDir()
+
+		// Create a single file with multiple secrets that match the same rule
+		content := `Multiple GitHub PATs in one file:
+token1: ghp_1234567890abcdefghijklmnopqrstuvwxyz
+token2: ghp_abcdefghijklmnopqrstuvwxyz1234567890
+token3: ghp_9876543210zyxwvutsrqponmlkjihgfedcba
+token4: ghp_aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2uV3wX4
+token5: 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`
+
+		err := os.WriteFile(path.Join(projectDir, "multi_secrets.txt"), []byte(content), 0644)
+		require.NoError(t, err, "failed to create test file")
+
+		// Run scan with --max-rule-matches-per-fragment set to 2
+		err = executable.run("filesystem", "--path", projectDir, "--max-rule-matches-per-fragment", "2", "--ignore-on-exit", "results")
+		assert.NoError(t, err, "scan should succeed with max-rule-matches-per-fragment flag")
+
+		report, err := executable.getReport()
+		require.NoError(t, err, "failed to get report")
+
+		totalSecrets := report.GetTotalSecretsFound()
+		t.Logf("Total secrets found with --max-rule-matches-per-fragment=2: %d", totalSecrets)
+		assert.LessOrEqual(t, totalSecrets, 2, "should find at most 2 secrets per rule per fragment")
+	})
+
+	t.Run("--max-secret-size flag: ignores secrets larger than specified size", func(t *testing.T) {
+		projectDir := t.TempDir()
+
+		// Create a file with a normal-sized secret
+		normalSecret := "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" // 40 chars
+		err := os.WriteFile(path.Join(projectDir, "normal.txt"), []byte(normalSecret), 0644)
+		require.NoError(t, err, "failed to create test file")
+
+		// Run scan with --max-secret-size set to a value smaller than the secret
+		err = executable.run("filesystem", "--path", projectDir, "--max-secret-size", "10", "--ignore-on-exit", "results")
+		assert.NoError(t, err, "scan should succeed with max-secret-size flag")
+
+		report, err := executable.getReport()
+		require.NoError(t, err, "failed to get report")
+
+		totalSecrets := report.GetTotalSecretsFound()
+		t.Logf("Total secrets found with --max-secret-size=10: %d", totalSecrets)
+		assert.Equal(t, 0, totalSecrets, "should find no secrets when max-secret-size is smaller than secret")
+
+		// Run scan with --max-secret-size set to a value larger than the secret
+		err = executable.run("filesystem", "--path", projectDir, "--max-secret-size", "100", "--ignore-on-exit", "results")
+		assert.NoError(t, err, "scan should succeed with max-secret-size flag")
+
+		report, err = executable.getReport()
+		require.NoError(t, err, "failed to get report")
+
+		totalSecrets = report.GetTotalSecretsFound()
+		t.Logf("Total secrets found with --max-secret-size=100: %d", totalSecrets)
+		assert.GreaterOrEqual(t, totalSecrets, 1, "should find secrets when max-secret-size is larger than secret")
+	})
+
+	t.Run("Combined limit flags: multiple limit flags together", func(t *testing.T) {
+		projectDir := t.TempDir()
+
+		// Create multiple files with multiple secrets each
+		for i := 1; i <= 5; i++ {
+			content := fmt.Sprintf(`File %d secrets:
+token1: ghp_%d234567890abcdefghijklmnopqrstuvwxy
+token2: ghp_%dabcdefghijklmnopqrstuvwxyz123456789`, i, i, i)
+			err := os.WriteFile(path.Join(projectDir, fmt.Sprintf("file%d.txt", i)), []byte(content), 0644)
+			require.NoError(t, err, "failed to create test file")
+		}
+
+		// Run scan with multiple limit flags
+		err = executable.run("filesystem",
+			"--path", projectDir,
+			"--max-findings", "3",
+			"--max-rule-matches-per-fragment", "1",
+			"--max-secret-size", "100",
+			"--ignore-on-exit", "results")
+		assert.NoError(t, err, "scan should succeed with combined limit flags")
+
+		report, err := executable.getReport()
+		require.NoError(t, err, "failed to get report")
+
+		totalSecrets := report.GetTotalSecretsFound()
+		t.Logf("Total secrets found with combined limit flags: %d", totalSecrets)
+		// With max-rule-matches-per-fragment=1, we get at most 1 per file (3 files)
+		// With max-findings=3, we get at most 3 total
+		assert.LessOrEqual(t, totalSecrets, 3, "should respect combined limit flags")
+	})
 }

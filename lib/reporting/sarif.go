@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/checkmarx/2ms/v4/lib/config"
-	"github.com/checkmarx/2ms/v4/lib/secrets"
+	"github.com/checkmarx/2ms/v5/lib/config"
+	"github.com/checkmarx/2ms/v5/lib/secrets"
 )
 
 func writeSarif(report *Report, cfg *config.Config) (string, error) {
@@ -52,9 +52,13 @@ func getRules(report *Report) []*SarifRule {
 		for _, secret := range reportSecrets {
 			if _, exists := uniqueRulesMap[secret.RuleID]; !exists {
 				uniqueRulesMap[secret.RuleID] = &SarifRule{
-					ID: secret.RuleID,
+					ID:   secret.RuleID,
+					Name: secret.RuleName,
 					FullDescription: &Message{
 						Text: secret.RuleDescription,
+					},
+					Properties: Properties{
+						"category": secret.RuleCategory,
 					},
 				}
 				reportRules = append(reportRules, uniqueRulesMap[secret.RuleID])
@@ -89,18 +93,29 @@ func getResults(report *Report) []Results {
 		return results
 	}
 
-	for _, secrets := range report.Results {
-		for _, secret := range secrets {
+	for _, secretsSlice := range report.Results {
+		for _, secret := range secretsSlice {
+			props := Properties{
+				"validationStatus": secret.ValidationStatus,
+				"cvssScore":        secret.CvssScore,
+				"resultId":         secret.ID,
+				"severity":         secret.Severity,
+				"ruleName":         secret.RuleName,
+			}
+
+			if secret.ExtraDetails != nil {
+				if pageID, ok := secret.ExtraDetails["confluence.pageId"]; ok {
+					props["confluence.pageId"] = pageID
+				}
+			}
+
 			r := Results{
 				Message: Message{
-					Text: createMessageText(secret.RuleID, secret.Source),
+					Text: createMessageText(secret.RuleName, secret.Source),
 				},
-				RuleId:    secret.RuleID,
-				Locations: getLocation(secret),
-				Properties: Properties{
-					"validationStatus": secret.ValidationStatus,
-					"cvssScore":        secret.CvssScore,
-				},
+				RuleId:     secret.RuleID,
+				Locations:  getLocation(secret),
+				Properties: props,
 			}
 			results = append(results, r)
 		}
@@ -152,8 +167,10 @@ type Tool struct {
 }
 
 type SarifRule struct {
-	ID              string   `json:"id"`
-	FullDescription *Message `json:"fullDescription,omitempty"`
+	ID              string     `json:"id"`
+	Name            string     `json:"name,omitempty"`
+	FullDescription *Message   `json:"fullDescription,omitempty"`
+	Properties      Properties `json:"properties,omitempty"`
 }
 
 type Message struct {

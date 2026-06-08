@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/checkmarx/2ms/v4/lib/config"
-	"github.com/checkmarx/2ms/v4/lib/secrets"
+	"github.com/checkmarx/2ms/v5/lib/config"
+	"github.com/checkmarx/2ms/v5/lib/secrets"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
@@ -18,12 +18,22 @@ import (
 
 // test input results
 var (
-	ruleID1 = "ruleID1"
-	ruleID2 = "ruleID2"
+	ruleID1       = "ruleID1"
+	ruleID2       = "ruleID2"
+	ruleID4       = "ruleID4"
+	RuleName1     = "ruleName1"
+	RuleName2     = "ruleName2"
+	RuleName4     = "ruleName4"
+	ruleCategory1 = "category1"
+	ruleCategory2 = "category2"
+	ruleCategory4 = "category4"
+
 	result1 = &secrets.Secret{
 		ID:               "ID1",
 		Source:           "file1",
 		RuleID:           ruleID1,
+		RuleName:         RuleName1,
+		RuleCategory:     ruleCategory1,
 		StartLine:        150,
 		EndLine:          150,
 		LineContent:      "line content",
@@ -32,6 +42,7 @@ var (
 		Value:            "value",
 		ValidationStatus: secrets.ValidResult,
 		CvssScore:        10.0,
+		Severity:         "High",
 		RuleDescription:  "Rule Description",
 	}
 	// this result has a different rule than result1
@@ -39,6 +50,8 @@ var (
 		ID:               "ID2",
 		Source:           "file2",
 		RuleID:           ruleID2,
+		RuleName:         RuleName2,
+		RuleCategory:     ruleCategory2,
 		StartLine:        10,
 		EndLine:          10,
 		LineContent:      "line content2",
@@ -46,6 +59,7 @@ var (
 		EndColumn:        160,
 		Value:            "value 2",
 		ValidationStatus: secrets.InvalidResult,
+		Severity:         "Medium",
 		CvssScore:        4.5,
 		RuleDescription:  "Rule Description2",
 	}
@@ -54,6 +68,8 @@ var (
 		ID:               "ID3",
 		Source:           "file3",
 		RuleID:           ruleID1,
+		RuleName:         RuleName1,
+		RuleCategory:     ruleCategory1,
 		StartLine:        16,
 		EndLine:          16,
 		LineContent:      "line content3",
@@ -61,8 +77,30 @@ var (
 		EndColumn:        130,
 		Value:            "value 3",
 		ValidationStatus: secrets.UnknownResult,
+		Severity:         "Low",
 		CvssScore:        0.0,
 		RuleDescription:  "Rule Description",
+	}
+	// result for confluence.pageId validation
+	result4 = &secrets.Secret{
+		ID:               "ID4",
+		Source:           "file4",
+		RuleID:           "ruleID4",
+		RuleName:         RuleName4,
+		RuleCategory:     ruleCategory4,
+		StartLine:        0,
+		EndLine:          0,
+		LineContent:      "line content4",
+		StartColumn:      11,
+		EndColumn:        130,
+		Value:            "value 4",
+		ValidationStatus: secrets.UnknownResult,
+		Severity:         "High",
+		CvssScore:        0.0,
+		RuleDescription:  "Rule Description",
+		ExtraDetails: map[string]interface{}{
+			"confluence.pageId": "1234567890",
+		},
 	}
 )
 
@@ -70,21 +108,39 @@ var (
 var (
 	// sarif rules
 	rule1Sarif = &SarifRule{
-		ID: ruleID1,
+		ID:   ruleID1,
+		Name: RuleName1,
 		FullDescription: &Message{
 			Text: result1.RuleDescription,
 		},
+		Properties: Properties{
+			"category": ruleCategory1,
+		},
 	}
 	rule2Sarif = &SarifRule{
-		ID: ruleID2,
+		ID:   ruleID2,
+		Name: RuleName2,
 		FullDescription: &Message{
 			Text: result2.RuleDescription,
+		},
+		Properties: Properties{
+			"category": ruleCategory2,
+		},
+	}
+	rule4Sarif = &SarifRule{
+		ID:   ruleID4,
+		Name: RuleName4,
+		FullDescription: &Message{
+			Text: result4.RuleDescription,
+		},
+		Properties: Properties{
+			"category": ruleCategory4,
 		},
 	}
 	// sarif results
 	result1Sarif = Results{
 		Message: Message{
-			Text: createMessageText(result1.RuleID, result1.Source),
+			Text: createMessageText(result1.RuleName, result1.Source),
 		},
 		RuleId: ruleID1,
 		Locations: []Locations{
@@ -111,11 +167,14 @@ var (
 		Properties: Properties{
 			"validationStatus": string(result1.ValidationStatus),
 			"cvssScore":        result1.CvssScore,
+			"resultId":         result1.ID,
+			"severity":         result1.Severity,
+			"ruleName":         RuleName1,
 		},
 	}
 	result2Sarif = Results{
 		Message: Message{
-			Text: createMessageText(result2.RuleID, result2.Source),
+			Text: createMessageText(result2.RuleName, result2.Source),
 		},
 		RuleId: ruleID2,
 		Locations: []Locations{
@@ -142,11 +201,14 @@ var (
 		Properties: Properties{
 			"validationStatus": string(result2.ValidationStatus),
 			"cvssScore":        result2.CvssScore,
+			"resultId":         result2.ID,
+			"severity":         result2.Severity,
+			"ruleName":         RuleName2,
 		},
 	}
 	result3Sarif = Results{
 		Message: Message{
-			Text: createMessageText(result3.RuleID, result3.Source),
+			Text: createMessageText(result3.RuleName, result3.Source),
 		},
 		RuleId: ruleID1,
 		Locations: []Locations{
@@ -173,6 +235,44 @@ var (
 		Properties: Properties{
 			"validationStatus": string(result3.ValidationStatus),
 			"cvssScore":        result3.CvssScore,
+			"resultId":         result3.ID,
+			"severity":         result3.Severity,
+			"ruleName":         RuleName1,
+		},
+	}
+	result4Sarif = Results{
+		Message: Message{
+			Text: createMessageText(result4.RuleName, result4.Source),
+		},
+		RuleId: ruleID4,
+		Locations: []Locations{
+			{
+				PhysicalLocation: PhysicalLocation{
+					ArtifactLocation: ArtifactLocation{
+						URI: result4.Source,
+					},
+					Region: Region{
+						StartLine:   result4.StartLine,
+						StartColumn: result4.StartColumn,
+						EndLine:     result4.EndLine,
+						EndColumn:   result4.EndColumn,
+						Snippet: Snippet{
+							Text: result4.Value,
+							Properties: Properties{
+								"lineContent": strings.TrimSpace(result4.LineContent),
+							},
+						},
+					},
+				},
+			},
+		},
+		Properties: Properties{
+			"validationStatus":  string(result4.ValidationStatus),
+			"cvssScore":         result4.CvssScore,
+			"confluence.pageId": result4.ExtraDetails["confluence.pageId"],
+			"resultId":          result4.ID,
+			"severity":          result4.Severity,
+			"ruleName":          RuleName4,
 		},
 	}
 )
@@ -196,24 +296,25 @@ JPcHeO7M6FohKgcEHX84koQDN98J/L7pFlSoU7WOl6f8BKavIdeSTPS9qQYWdQuT
 -----END RSA PRIVATE KEY-----`)
 
 	results := map[string][]*secrets.Secret{}
-	report := Report{len(results), 1, results}
-	secret := &secrets.Secret{Source: "bla", StartLine: 1, StartColumn: 0, EndLine: 1, EndColumn: 0, Value: secretValue}
+	report := New()
+	id := "id"
+	secret := &secrets.Secret{ID: id, Source: "bla", StartLine: 1, StartColumn: 0, EndLine: 1, EndColumn: 0, Value: secretValue}
 	source := "directory\\rawStringAsFile.txt"
+	results[source] = append(results[source], secret)
+	report.SetResults(results)
 
-	report.Results[source] = append(report.Results[source], secret)
-
-	key, fileExist := report.Results[source]
+	key, fileExist := report.GetResults()[source]
 	if !fileExist {
 		t.Errorf("key %s not added", source)
 	}
 
-	if !reflect.DeepEqual(report.Results, results) {
+	if !reflect.DeepEqual(report.GetResults(), results) {
 		t.Errorf("got %+v want %+v", key, results)
 	}
 }
 
 func TestWriteReportInNonExistingDir(t *testing.T) {
-	report := Init()
+	report := New()
 
 	tempDir := os.TempDir()
 	path := filepath.Join(tempDir, "test_temp_dir", "sub_dir", "report.yaml")
@@ -229,13 +330,13 @@ func TestGetOutputSarif(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		arg     Report
+		arg     *Report
 		want    []Runs
 		wantErr bool
 	}{
 		{
 			name: "two_results_same_rule_want_one_rule_in_report",
-			arg: Report{
+			arg: &Report{
 				TotalItemsScanned: 2,
 				TotalSecretsFound: 2,
 				Results: map[string][]*secrets.Secret{
@@ -264,7 +365,7 @@ func TestGetOutputSarif(t *testing.T) {
 		},
 		{
 			name: "two_results_two_rules_want_two_rules_in_report",
-			arg: Report{
+			arg: &Report{
 				TotalItemsScanned: 2,
 				TotalSecretsFound: 2,
 				Results: map[string][]*secrets.Secret{
@@ -288,6 +389,33 @@ func TestGetOutputSarif(t *testing.T) {
 					Results: []Results{
 						result1Sarif,
 						result2Sarif,
+					},
+				},
+			},
+		},
+		{
+			name: "includes confluence.pageId in sarif result properties",
+			arg: &Report{
+				TotalItemsScanned: 1,
+				TotalSecretsFound: 1,
+				Results: map[string][]*secrets.Secret{
+					"secret1": {result4},
+				},
+			},
+			wantErr: false,
+			want: []Runs{
+				{
+					Tool: Tool{
+						Driver: Driver{
+							Name:            "report",
+							SemanticVersion: "1",
+							Rules: []*SarifRule{
+								rule4Sarif,
+							},
+						},
+					},
+					Results: []Results{
+						result4Sarif,
 					},
 				},
 			},
@@ -341,10 +469,10 @@ func SortResults(results1, results2 []Results) {
 func TestGetOutputYAML(t *testing.T) {
 	testCases := []struct {
 		name   string
-		report Report
+		report *Report
 	}{{
 		name: "No secrets found",
-		report: Report{
+		report: &Report{
 			TotalItemsScanned: 5,
 			TotalSecretsFound: 0,
 			Results:           map[string][]*secrets.Secret{},
@@ -352,7 +480,7 @@ func TestGetOutputYAML(t *testing.T) {
 	},
 		{
 			name: "Single real secret in hardcodedPassword.go",
-			report: Report{
+			report: &Report{
 				TotalItemsScanned: 1,
 				TotalSecretsFound: 1,
 				Results: map[string][]*secrets.Secret{
@@ -360,7 +488,9 @@ func TestGetOutputYAML(t *testing.T) {
 						{
 							ID:               "c6490d749fd4670fde969011d99ea5c4c4b1c0d7",
 							Source:           "..\\2ms\\engine\\rules\\hardcodedPassword.go",
-							RuleID:           "generic-api-key",
+							RuleName:         "generic-api-key",
+							RuleID:           "f0872990-61ab-4e55-b92a-d627dc1bc066",
+							RuleCategory:     "API Access",
 							StartLine:        45,
 							EndLine:          45,
 							LineContent:      "value",
@@ -368,6 +498,7 @@ func TestGetOutputYAML(t *testing.T) {
 							EndColumn:        64,
 							Value:            "value",
 							ValidationStatus: "",
+							Severity:         "High",
 							CvssScore:        8.2,
 							RuleDescription:  "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
 						},
@@ -377,7 +508,7 @@ func TestGetOutputYAML(t *testing.T) {
 		},
 		{
 			name: "Multiple real JWT secrets in jwt.txt",
-			report: Report{
+			report: &Report{
 				TotalItemsScanned: 2,
 				TotalSecretsFound: 2,
 				Results: map[string][]*secrets.Secret{
@@ -385,7 +516,9 @@ func TestGetOutputYAML(t *testing.T) {
 						{
 							ID:               "12fd8706491196cbfbdddd2fdcd650ed842dd963",
 							Source:           "..\\2ms\\pkg\\testData\\secrets\\jwt.txt",
-							RuleID:           "jwt",
+							RuleName:         "Jwt",
+							RuleID:           "0fc98133-a57b-4e08-9990-60952d4a82df",
+							RuleCategory:     "General",
 							StartLine:        1,
 							EndLine:          1,
 							LineContent:      "line content",
@@ -393,6 +526,7 @@ func TestGetOutputYAML(t *testing.T) {
 							EndColumn:        232,
 							Value:            "value",
 							ValidationStatus: "",
+							Severity:         "Medium",
 							CvssScore:        8.2,
 							RuleDescription:  "Uncovered a JSON Web Token, which may lead to unauthorized access to web applications and sensitive user data.",
 							ExtraDetails: map[string]interface{}{
@@ -405,7 +539,9 @@ func TestGetOutputYAML(t *testing.T) {
 						{
 							ID:               "12fd8706491196cbfbdddd2fdcd650ed842dd963",
 							Source:           "..\\2ms\\pkg\\testData\\secrets\\jwt.txt",
-							RuleID:           "jwt",
+							RuleName:         "Jwt",
+							RuleID:           "0fc98133-a57b-4e08-9990-60952d4a82df",
+							RuleCategory:     "General",
 							StartLine:        2,
 							EndLine:          2,
 							LineContent:      "line Content",
@@ -414,6 +550,7 @@ func TestGetOutputYAML(t *testing.T) {
 							Value:            "value",
 							ValidationStatus: "",
 							CvssScore:        8.2,
+							Severity:         "Low",
 							RuleDescription:  "Uncovered a JSON Web Token, which may lead to unauthorized access to web applications and sensitive user data.",
 							ExtraDetails: map[string]interface{}{
 								"secretDetails": map[string]interface{}{
@@ -437,7 +574,9 @@ func TestGetOutputYAML(t *testing.T) {
 			err = yaml.Unmarshal([]byte(output), &report)
 			assert.NoError(t, err)
 
-			assert.Equal(t, tc.report, report)
+			assert.Equal(t, tc.report.TotalItemsScanned, report.TotalItemsScanned)
+			assert.Equal(t, tc.report.TotalSecretsFound, report.TotalSecretsFound)
+			assert.Equal(t, tc.report.Results, report.Results)
 		})
 	}
 }
