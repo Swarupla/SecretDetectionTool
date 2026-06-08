@@ -2,8 +2,6 @@ name: PR Validation
 
 on:
   pull_request:
-    branches:
-      - master
   merge_group:
 
 jobs:
@@ -22,15 +20,18 @@ jobs:
         
       - uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
         with:
-          go-version: "^1.22"
+          go-version-file: go.mod
 
       - name: go mod tidy
         run: |
           go mod tidy
           git diff --exit-code
 
-      - name: Go Linter
-        run: docker run --rm -v $(pwd):/app -w /app golangci/golangci-lint:v2.1.5 golangci-lint run --timeout=5m
+      - name: install linter
+        run: make get-linter
+
+      - name: run linter
+        run: make lint
 
       - name: Go Test
         run: go test -v ./...
@@ -39,13 +40,13 @@ jobs:
         run: go run . git . --config .2ms.yml
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: cx-public-ubuntu-x64
     steps:
       - name: Checkout code
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb #v3.3.0
+        uses: step-security/setup-buildx-action@f931205d68723ad9589fd2a7e2ece238bf9de341 # v4.0.0
 
       - run: make build
       - name: docker run
@@ -53,7 +54,7 @@ jobs:
           docker run -v "$(pwd)":/repo -t checkmarx/2ms:latest git /repo --report-path output/results.json --ignore-on-exit results
 
   kics:
-    runs-on: ubuntu-latest
+    runs-on: cx-public-ubuntu-x64
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       - run: mkdir -p kics-results

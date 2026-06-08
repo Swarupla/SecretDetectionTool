@@ -2,18 +2,23 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      version_override:
+        description: 'Override semantic version (e.g., v4.3.0) - leave empty for automatic calculation'
+        required: false
+        type: string
   push:
     branches: [master]
 
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: cx-public-ubuntu-x64
 
     outputs:
-      git_tag: ${{ steps.semantic_release_info.outputs.git_tag }}
-      version: ${{ steps.semantic_release_info.outputs.version }}
-      notes: ${{ steps.semantic_release_info.outputs.notes }}
+      git_tag: ${{ steps.semantic_release_info.outputs.git_tag || steps.version_override.outputs.git_tag }}
+      version: ${{ steps.semantic_release_info.outputs.version || steps.version_override.outputs.version }}
+      notes: ${{ steps.semantic_release_info.outputs.notes || steps.version_override.outputs.notes }}
     steps:
       - name: Checkout code
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -22,23 +27,30 @@ jobs:
 
       - uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
         with:
-          go-version: "^1.22"
-      - name: Go Linter
-        run: docker run --rm -v $(pwd):/app -w /app golangci/golangci-lint:v2.1.5 golangci-lint run --timeout=5m
+          go-version-file: go.mod
 
       - name: Unit Tests
         run: go test ./...
 
       - name: Gets release info
         id: semantic_release_info
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.version_override == ''
         uses: jossef/action-semantic-release-info@277fc891fc5ac40ed0e8d6bf59a0e24a25dfdeac #v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Override version if specified
+        id: version_override
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.version_override != ''
+        run: |
+          echo "Using manual version override: ${{ github.event.inputs.version_override }}"
+          echo "git_tag=${{ github.event.inputs.version_override }}" >> $GITHUB_OUTPUT
+          echo "version=$(echo '${{ github.event.inputs.version_override }}' | sed 's/^v//')" >> $GITHUB_OUTPUT
+          echo "notes=Manual release with version override to ${{ github.event.inputs.version_override }}" >> $GITHUB_OUTPUT
+
   build:
     name: Build and Release
-    runs-on: ubuntu-latest
+    runs-on: cx-public-ubuntu-x64
     needs: test
     if: ${{ needs.test.outputs.git_tag }}
     steps:
@@ -47,7 +59,7 @@ jobs:
 
       - uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
         with:
-          go-version: "^1.22"
+          go-version-file: go.mod
 
       - name: Go Mod Tidy
         run: go mod tidy
@@ -61,6 +73,16 @@ jobs:
         run: |
           go build -ldflags "-s -w -X github.com/checkmarx/2ms/cmd.Version=$VERSION" -a -installsuffix cgo -o dist/2ms main.go
           zip -j dist/linux-amd64.zip dist/2ms
+          rm dist/2ms
+      - name: Compile for Linux arm64
+        env:
+          VERSION: ${{ needs.test.outputs.version }}
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: arm64
+        run: |
+          go build -ldflags "-s -w -X github.com/checkmarx/2ms/cmd.Version=$VERSION" -a -installsuffix cgo -o dist/2ms main.go
+          zip -j dist/linux-arm64.zip dist/2ms
           rm dist/2ms
 
       - name: Compile for MacOS amd64
@@ -97,22 +119,22 @@ jobs:
           rm dist/2ms.exe
           
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@5927c834f5b4fdf503fca6f4c7eccda82949e1ee # v2
+        uses: step-security/setup-qemu-action@109c6ed9f089be1a250c75fd6a534e30df44e030 # v4.0.0
         with:
           image: tonistiigi/binfmt:latest
           platforms: linux/amd64,linux/arm64
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb #v3.3.0
+        uses: step-security/setup-buildx-action@f931205d68723ad9589fd2a7e2ece238bf9de341 # v4.0.0
 
       - name: Login to DockerHub
-        uses: docker/login-action@e92390c5fb421da1463c202d546fed0ec5c39f20 #v3.1.0
+        uses: step-security/docker-login-action@870af644803bf9f204aed474adbad2958fec048b # v4.1.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Creating Release
-        uses: softprops/action-gh-release@975c1b265e11dd76618af1c374e7981f9a6ff44a
+        uses: step-security/action-gh-release@277bfa82abcfdb73e5bbb19e213fd76532ee2be5 # v3.0.0
         with:
           tag_name: ${{ needs.test.outputs.git_tag }}
           name: ${{ needs.test.outputs.git_tag }}
@@ -122,7 +144,7 @@ jobs:
             dist/*.zip
 
       - name: Build and push
-        uses: docker/build-push-action@2cdde995de11925a030ce8070c3d77a52ffcf1c0 # v5.3.0
+        uses: step-security/docker-build-push-action@846549baaf047e867d038826129a64d81df0f704 # v7.1.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64

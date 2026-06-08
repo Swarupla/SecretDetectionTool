@@ -8,11 +8,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   run:
-    runs-on: ubuntu-latest
-    env:
-      go-version: 'stable'
+    runs-on: cx-public-ubuntu-x64
 
     steps:
     - name: Checkout code
@@ -21,11 +22,11 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
       with:
-        go-version: ${{ env.go-version }}
+        go-version-file: go.mod
       env:
         GOPROXY: direct
         GONOSUMDB: "*"
-        GOPRIVATE: https://github.com/CheckmarxDev/ # Add your private organization url here
+        GOPRIVATE: https://github.com/CheckmarxDev/
 
     - name: Install dependencies 
       run: go install golang.org/x/tools/cmd/cover@latest
@@ -36,7 +37,7 @@ jobs:
                   
          
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@84508663e988701840491b86de86b666e8a86bed # v4.3.0
+      uses: step-security/codecov-action@87e66f47a0f8ab4cae465a323eb9ec63d8b6b875 # v6.0.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }} 
         files: ./cover.out  
