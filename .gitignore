@@ -17,7 +17,7 @@ vendor/
 # IDE directories and files
 .vscode/
 
-dist
+
 2ms
 
 cover.out.tmp
