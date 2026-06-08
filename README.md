@@ -64,6 +64,8 @@ Scan recent Git history instead:
 
 ## Installation
 
+> For a step-by-step installation guide — including verification, upgrading, uninstalling, and troubleshooting — see [INSTALL.md](INSTALL.md).
+
 ### Homebrew (macOS/Linux)
 
 ```bash

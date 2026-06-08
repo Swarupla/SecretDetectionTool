@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>2ms-web · Low False-Positive Secret Scanner</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">2ms<span class="logo-accent">web</span></span>
+      <span class="tagline">Low false-positive secret scanner</span>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card input-card">
+      <div class="tabs" id="tabs">
+        <button class="tab active" data-tab="path">Local path</button>
+        <button class="tab" data-tab="git">Git URL</button>
+        <button class="tab" data-tab="zip">Upload zip</button>
+      </div>
+
+      <div class="tab-panel active" data-panel="path">
+        <label>Server-side directory path</label>
+        <input type="text" id="path" placeholder="/path/to/your/codebase" />
+      </div>
+      <div class="tab-panel" data-panel="git">
+        <label>Git repository URL</label>
+        <input type="text" id="gitUrl" placeholder="https://github.com/org/repo.git" />
+      </div>
+      <div class="tab-panel" data-panel="zip">
+        <label>Zip archive of the codebase</label>
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="file" accept=".zip" hidden />
+          <p>Drag &amp; drop a .zip here, or <button class="link" id="browse">browse</button></p>
+          <p class="filename" id="filename"></p>
+        </div>
+      </div>
+
+      <div class="options">
+        <label class="switch"><input type="checkbox" id="applyExcludes" checked /> <span>Skip build/dep/cache files</span></label>
+        <label class="switch"><input type="checkbox" id="applyFilters" checked /> <span>Confidence filtering</span></label>
+        <label class="switch"><input type="checkbox" id="applyFeedback" checked /> <span>Apply learned false positives</span></label>
+        <label class="switch"><input type="checkbox" id="aggressiveRecall" checked /> <span>Catch weak/keyword secrets (higher recall)</span></label>
+        <label class="switch"><input type="checkbox" id="withValidation" /> <span>Live validation (network)</span></label>
+        <label class="num">Min entropy <input type="number" id="minEntropy" value="3.0" step="0.1" min="0" max="8" /></label>
+      </div>
+
+      <button class="primary" id="scanBtn">Scan</button>
+    </section>
+
+    <section class="card progress-card hidden" id="progressCard">
+      <div class="progress-row">
+        <div class="spinner"></div>
+        <div>
+          <div class="progress-msg" id="progressMsg">Starting…</div>
+          <div class="progress-sub" id="progressSub"></div>
+        </div>
+      </div>
+      <div class="bar"><div class="bar-fill" id="barFill"></div></div>
+    </section>
+
+    <section class="card error-card hidden" id="errorCard"></section>
+
+    <section id="results" class="hidden">
+      <div class="stats" id="stats"></div>
+
+      <div class="card results-card">
+        <div class="results-toolbar">
+          <input type="text" id="search" placeholder="Filter by file, rule, value…" />
+          <div class="chips" id="confChips">
+            <button class="chip active" data-conf="all">All</button>
+            <button class="chip" data-conf="high">High</button>
+            <button class="chip" data-conf="medium">Medium</button>
+          </div>
+          <label class="switch small"><input type="checkbox" id="showSuppressed" /> <span>Show suppressed</span></label>
+          <label class="switch small"><input type="checkbox" id="revealValues" checked /> <span>Reveal values</span></label>
+          <div class="spacer"></div>
+          <button class="ghost" id="exportJson">Export JSON</button>
+          <button class="ghost" id="exportCsv">Export CSV</button>
+        </div>
+        <div class="table-wrap">
+          <table id="resultsTable">
+            <thead>
+              <tr>
+                <th>Confidence</th><th>Severity</th><th>Rule</th><th>Location</th><th>Value</th><th>Why</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody"></tbody>
+          </table>
+          <p class="empty hidden" id="emptyState">No findings match the current filters.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
